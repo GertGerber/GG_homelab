@@ -205,25 +205,6 @@ detect_pkgmgr() {
   info "Package manager: $PKG (update/install helpers exported)"
 }
 
-# ── Package manager detection (nala preferred) ────────────────────────────────
-detect_pkgmgr() {
-  local sudo_cmd
-  if [[ $EUID -ne 0 ]]; then sudo_cmd="sudo"; else sudo_cmd=""; fi
-  if have_cmd nala; then
-    PKG="nala"
-    PKG_UPDATE="$sudo_cmd nala update"
-    PKG_INSTALL="$sudo_cmd nala install -y"
-  elif have_cmd apt-get; then
-    PKG="apt-get"
-    PKG_UPDATE="$sudo_cmd apt-get update"
-    PKG_INSTALL="$sudo_cmd apt-get install -y"
-  else
-    die "Neither 'nala' nor 'apt-get' found. This project supports apt-based systems only."
-  fi
-  export PKG PKG_UPDATE PKG_INSTALL
-  info "Package manager: $PKG (update/install helpers exported)"
-}
-
 write_env_file() {
   local env_file="$WORKDIR/.bootstrap_env"
   cat > "$env_file" <<EOF
@@ -237,23 +218,22 @@ EOF
   printf 'To use in follow-up scripts: source "%s"\n' "$env_file"
 }
 
+
+
 # ── Pre-flight / OS check ─────────────────────────────────────────────────────
 # Function to check for required commands
+requirements() {
+  require() { $PKG_INSTALL "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 2; }; }
 
-require() { $PKG_INSTALL "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 2; }; }
-
-sanity_checks() {
   # Basic sanity checks
   info "Sanity checks"
   require curl
   require bash
   require tar
+  if ! have_cmd sha256sum; then
+    warn "sha256sum not found; skipping tarball verification"
+  fi
 }
-
-
-if ! have_cmd sha256sum; then
-  warn "sha256sum not found; skipping tarball verification"
-fi
 
 # ── Sudo detection ────────────────────────────────────────────────────────────────────
 # Check for root or sudo access
@@ -282,35 +262,39 @@ fetch_repo() {
   local bundle_url="https://codeload.github.com/$REPO/tar.gz/$REF"
   local auth_header=()
   [[ -n "$GITHUB_TOKEN" ]] && auth_header=(-H "Authorization: Bearer $GITHUB_TOKEN")
- 
-  REPO_DIR="$HOME/temp"
-  mkdir -p "$REPO_DIR"
-  cd "$REPO_DIR"
+
+  mkdir -p "$WORKDIR"
+cd "$WORKDIR"
 
   info "Fetching bundle @ $REF from $REPO"
   curl -fsSLo repo.tar.gz "${auth_header[@]}" "$bundle_url"
-  
-  info "Extract repo.tar.gz to $WORKDIR"
-  tar -xzf repo.tar.gz -C "$WORKDIR" \
-  --strip-components=1 \
-  --no-same-owner \
-  --delay-directory-restore \
-  --warning=no-unknown-keyword
-  # info "Remove repo.tar.gz"
-  # rm repo.tar.gz
 
+  if have_cmd sha256sum && [[ -f repo.tar.gz.sha256 ]]; then
+    info "Verifying tarball checksum"
+    sha256sum -c repo.tar.gz.sha256
+  else
+    warn "No checksum file found; continuing without verification"
+  fi
 
+  # Get top-level dir name reliably, then extract and cd
+  local top_dir
+  top_dir="$(tar -tzf repo.tar.gz | head -1 | cut -f1 -d/)"
+tar -xzf repo.tar.gz
+  cd "$top_dir"
+  success "Repository extracted to: $(pwd)"
 }
 
 
 # ── Main Script Execution ──────────────────────────────────────────────────────
+# Print banner
 print_banner
+# Devider
 devider
 detect_pkgmgr
 devider
-sanity_checks
-devider
-fetch_repo
-devider
 write_env_file
 devider
+requirements
+devider
+# Get latest Repo
+fetch_repo

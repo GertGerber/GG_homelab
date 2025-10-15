@@ -44,16 +44,27 @@ have_cmd()   { command -v "$1" >/dev/null 2>&1; }
 # Absolute path of the current script
 # Usage: script_abs
 script_abs() {
-  if have_cmd readlink; then readlink -f "$0"; elif have_cmd realpath; then realpath "$0"; else
-    # Fallback (works in typical Linux shells)
-    python3 - <<'PY' 2>/dev/null || printf '%s' "$0"
-import os,sys
-print(os.path.abspath(sys.argv[1]))
-PY
+  local src="${BASH_SOURCE[0]:-$0}"
+
+  if command -v readlink >/dev/null 2>&1; then
+    readlink -f -- "$src" 2>/dev/null && return
   fi
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -- "$src" 2>/dev/null && return
+  fi
+  python3 - "$src" <<'PY' 2>/dev/null && return
+import os, sys
+print(os.path.realpath(sys.argv[1]))
+PY
+  # Last resort
+  case "$src" in
+    /*) printf '%s\n' "$src" ;;
+    */*) printf '%s\n' "$(pwd)/$src" ;;
+    *)  cmd=$(command -v -- "$src" 2>/dev/null) && printf '%s\n' "$cmd" || printf '%s\n' "$src" ;;
+  esac
 }
-script_abs
-readonly SCRIPT_ABS
+readonly SCRIPT_ABS="$(script_abs)"
+
 
 # ── Error Handling ─────────────────────────────────────────────────────────────
 # Safety rails

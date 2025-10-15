@@ -41,28 +41,33 @@ readonly MODE ENVIRONMENT LOG_DIR REPO REF WORKDIR TF_DIR ANSIBLE_PLAYBOOK ANSIB
 # Usage: if have_cmd git; then echo "Git is installed"; fi  
 have_cmd()   { command -v "$1" >/dev/null 2>&1; }
 
-# Absolute path of the current script
-# Usage: script_abs
+# Absolute path of the current script (empty if running from stdin)
+# Usage: echo "$SCRIPT_ABS"  # may be empty for curl | bash
 script_abs() {
-  local src="${BASH_SOURCE[0]:-$0}"
+  # Prefer BASH_SOURCE[0] when available (works for sourced scripts too)
+  local src="${BASH_SOURCE[0]:-}"
+  # Fall back to $0 if BASH_SOURCE[0] is empty
+  [[ -z "$src" ]] && src="${0:-}"
 
-  if command -v readlink >/dev/null 2>&1; then
-    readlink -f -- "$src" 2>/dev/null && return
-  fi
-  if command -v realpath >/dev/null 2>&1; then
-    realpath -- "$src" 2>/dev/null && return
-  fi
-  python3 - "$src" <<'PY' 2>/dev/null && return
-import os, sys
-print(os.path.realpath(sys.argv[1]))
-PY
-  # Last resort
+  # If running via bash -c/curl|bash, $src can be "-" or "--" or not a real path
   case "$src" in
-    /*) printf '%s\n' "$src" ;;
-    */*) printf '%s\n' "$(pwd)/$src" ;;
-    *)  cmd=$(command -v -- "$src" 2>/dev/null) && printf '%s\n' "$cmd" || printf '%s\n' "$src" ;;
+    ""|"-"|"--") printf '' ; return 0 ;;
   esac
+
+  if have_cmd realpath; then
+    realpath "$src"
+  elif have_cmd readlink; then
+    readlink -f "$src"
+  else
+    # Portable Python fallback
+    python3 - "$src" 2>/dev/null <<'PY' || printf '%s' "$src"
+import os, sys
+print(os.path.abspath(sys.argv[1]))
+PY
+  fi
 }
+
+# Capture once and mark readonly
 readonly SCRIPT_ABS="$(script_abs)"
 
 
